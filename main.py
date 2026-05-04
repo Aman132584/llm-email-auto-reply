@@ -9,7 +9,7 @@ from config import GEMINI_API_KEY, PRODUCTS_CSV, EMAILS_CSV
 
 # Configure Gemini model
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 # Load product and email data
 products = pd.read_csv(PRODUCTS_CSV)
@@ -28,32 +28,22 @@ index = faiss.IndexFlatL2(embeddings.shape[1])
 index.add(np.array(embeddings))
 
 
-# Classify email and extract product ID using Gemini
+# Classify email and extract product ID
 def classify_and_extract(email):
     prompt = f"""
-    Classify this email into ONE of:
-    - product inquiry
-    - complaint
-    - other
+    Classify this email into one of: product inquiry, complaint, other.
+    Also extract the Product ID if mentioned (like ACC101).
 
-    Also extract Product ID (like ACC101, CLO203) if mentioned.
+    Return ONLY JSON:
+    {{"category": "product inquiry", "product_id": "ACC101"}}
 
-    Return ONLY JSON (no explanation):
-    {{
-      "category": "product inquiry",
-      "product_id": "ACC101"
-    }}
-
-    Email:
-    {email}
+    Email: {email}
     """
-
     response = model.generate_content(prompt).text
 
     try:
         clean_text = re.sub(r"```json|```", "", response.strip()).strip()
         data = json.loads(clean_text)
-
         category = str(data.get("category", "")).lower().strip()
         product_id = data.get("product_id")
 
@@ -70,12 +60,10 @@ def classify_and_extract(email):
         return "other", None
 
 
-# Find the most relevant product by ID or semantic search
+# Find product by ID or semantic search
 def retrieve_product(email, product_id):
     if product_id:
-        result = products[
-            products["Product_ID"].str.upper() == str(product_id).upper()
-        ]
+        result = products[products["Product_ID"].str.upper() == str(product_id).upper()]
         if not result.empty:
             return result.iloc[0]
 
@@ -84,51 +72,76 @@ def retrieve_product(email, product_id):
     return products.iloc[indices[0][0]]
 
 
-# Generate a professional reply using product details
+# Generate reply for product inquiry
 def generate_inquiry_reply(email, product):
     prompt = f"""
-    Write a professional and friendly customer support email reply.
+    You are a customer support agent. Write a friendly reply to this email.
 
-    Customer Email:
-    {email}
+    Customer Email: {email}
 
-    Product Details:
-    Name: {product['Product_Name']}
-    Category: {product['Category']}
+    Product: {product['Product_Name']} | {product['Category']}
     Description: {product['Description']}
-    Price: {product['Price']}
-    Stock: {product['Stock']}
+    Price: {product['Price']} | Stock: {product['Stock']}
 
-    Include a warm greeting, relevant product details, and a polite closing.
-    Sign off as: Customer Support Team
+    Keep it warm and natural. Sign off as: Customer Support Team
     """
     return model.generate_content(prompt).text
 
 
-# Process a single email and return the reply if it is a product inquiry
+# Generate reply for complaint
+def generate_complaint_reply(email, product):
+    prompt = f"""
+    You are a customer support agent handling a complaint. Write an empathetic reply.
+
+    Customer Complaint: {email}
+
+    Product: {product['Product_Name']} | {product['Category']}
+    Description: {product['Description']}
+    Price: {product['Price']}
+
+    Apologize sincerely and offer a refund or replacement. Sign off as: Customer Support Team
+    """
+    return model.generate_content(prompt).text
+
+
+# Generate reply for general emails
+def generate_other_reply(email):
+    prompt = f"""
+    You are a customer support agent. Write a polite reply to this message.
+
+    Customer Email: {email}
+
+    Acknowledge their message and ask for more details if needed. Sign off as: Customer Support Team
+    """
+    return model.generate_content(prompt).text
+
+
+# Route email to the right reply function
 def process_email(email):
     category, product_id = classify_and_extract(email)
 
-    if category != "product inquiry":
-        return None
+    if category == "product inquiry":
+        product = retrieve_product(email, product_id)
+        reply = generate_inquiry_reply(email, product)
+    elif category == "complaint":
+        product = retrieve_product(email, product_id)
+        reply = generate_complaint_reply(email, product)
+    else:
+        reply = generate_other_reply(email)
 
-    product = retrieve_product(email, product_id)
-    reply = generate_inquiry_reply(email, product)
-    return reply
+    return category, reply
 
 
-# Run the pipeline on sample emails
+# Run pipeline on sample emails
 if __name__ == "__main__":
     sample_emails = emails.head(5)
 
     for i, (_, row) in enumerate(sample_emails.iterrows(), 1):
         email = row["Email_Text"]
-        response = process_email(email)
-
-        if response is None:
-            continue
+        category, response = process_email(email)
 
         print("\n" + "-" * 60)
-        print(f"Email #{i}:\n{email}")
+        print(f"Email #{i} | Category: {category.upper()}")
+        print(f"\nCustomer Email:\n{email}")
         print(f"\nReply:\n{response}")
-        print("-" * 60) 
+        print("-" * 60)
