@@ -1,31 +1,20 @@
-import os
 import pandas as pd
 import numpy as np
 import faiss
 import json
 import re
-from groq import Groq
+import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
-from config import PRODUCTS_CSV, EMAILS_CSV
-from dotenv import load_dotenv
+from config import GEMINI_API_KEY, PRODUCTS_CSV, EMAILS_CSV
 
-load_dotenv()
-
-# Connect to Groq
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-def ask_llm(prompt):
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
-
+# Configure Gemini model
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 # Load product and email data
 products = pd.read_csv(PRODUCTS_CSV)
 emails = pd.read_csv(EMAILS_CSV)
-z
+
 # Build FAISS index from product descriptions
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -50,7 +39,7 @@ def classify_and_extract(email):
 
     Email: {email}
     """
-    response = ask_llm(prompt)
+    response = model.generate_content(prompt).text
 
     try:
         clean_text = re.sub(r"```json|```", "", response.strip()).strip()
@@ -96,7 +85,7 @@ def generate_inquiry_reply(email, product):
 
     Keep it warm and natural. Sign off as: Customer Support Team
     """
-    return ask_llm(prompt)
+    return model.generate_content(prompt).text
 
 
 # Generate reply for complaint
@@ -112,7 +101,7 @@ def generate_complaint_reply(email, product):
 
     Apologize sincerely and offer a refund or replacement. Sign off as: Customer Support Team
     """
-    return ask_llm(prompt)
+    return model.generate_content(prompt).text
 
 
 # Generate reply for general emails
@@ -124,7 +113,7 @@ def generate_other_reply(email):
 
     Acknowledge their message and ask for more details if needed. Sign off as: Customer Support Team
     """
-    return ask_llm(prompt)
+    return model.generate_content(prompt).text
 
 
 # Route email to the right reply function
